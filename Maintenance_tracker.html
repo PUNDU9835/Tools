@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Maintenance Tracker</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        .form-container, .records-container {
+            margin: 20px 0;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        .error {
+            color: red;
+            font-size: 0.8em;
+            margin-top: 2px;
+        }
+        .success {
+            border: 1px solid green;
+        }
+        .invalid {
+            border: 1px solid red;
+        }
+        .validation-container {
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Maintenance Tracker</h1>
+    
+    <div class="form-container">
+        <form id="maintenanceForm">
+            <div class="validation-container">
+                <label>Machine Name:</label><br>
+                <input type="text" id="machineName" required>
+                <div id="machineNameError" class="error"></div>
+            </div>
+
+            <div class="validation-container">
+                <label>Type of Maintenance:</label><br>
+                <select id="maintenanceType" required>
+                    <option value="Shutdown">Shutdown</option>
+                    <option value="Breakdown">Breakdown</option>
+                    <option value="Time Opportunity">Time Opportunity</option>
+                </select>
+            </div>
+
+            <div class="validation-container">
+                <label>Maintenance Category:</label><br>
+                <input type="radio" name="category" value="Electrical" required> Electrical
+                <input type="radio" name="category" value="Mechanical"> Mechanical
+                <div id="categoryError" class="error"></div>
+            </div>
+
+            <div class="validation-container">
+                <label>Job Description:</label><br>
+                <textarea id="jobDescription" required></textarea>
+                <div id="descriptionError" class="error"></div>
+            </div>
+
+            <div class="validation-container">
+                <label>Spares Used:</label><br>
+                <textarea id="sparesUsed"></textarea>
+                <div id="sparesError" class="error"></div>
+            </div>
+
+            <div class="validation-container">
+                <label>Job Start Date:</label><br>
+                <input type="date" id="startDate" required>
+                <div id="startDateError" class="error"></div>
+            </div>
+
+            <div class="validation-container">
+                <label>Job Start Time:</label><br>
+                <input type="time" id="startTime" required>
+                <div id="startTimeError" class="error"></div>
+            </div>
+
+            <div class="validation-container">
+                <label>Job End Date:</label><br>
+                <input type="date" id="endDate" required>
+                <div id="endDateError" class="error"></div>
+            </div>
+
+            <div class="validation-container">
+                <label>Job End Time:</label><br>
+                <input type="time" id="endTime" required>
+                <div id="timeError" class="error"></div>
+            </div>
+
+            <button type="submit" id="submitBtn" disabled>Save Record</button>
+            <button type="button" id="exportExcel">Export to Excel</button>
+        </form>
+    </div>
+
+    <!-- Records and Stats sections remain the same -->
+    <div class="records-container">
+        <h2>Maintenance Records</h2>
+        <table id="recordsTable">
+            <thead>
+                <tr>
+                    <th>Machine Name</th>
+                    <th>Type</th>
+                    <th>Category</th>
+                    <th>Description</th>
+                    <th>Spares</th>
+                    <th>Start DateTime</th>
+                    <th>End DateTime</th>
+                    <th>Duration (hrs)</th>
+                </tr>
+            </thead>
+            <tbody id="recordsBody"></tbody>
+        </table>
+    </div>
+
+    <div class="stats-container">
+        <h2>Statistics</h2>
+        <p>Total Records: <span id="totalRecords">0</span></p>
+        <p>Total Maintenance Hours: <span id="totalHours">0</span></p>
+    </div>
+
+    <script>
+        let records = [];
+        const formState = {
+            machineName: false,
+            category: false,
+            jobDescription: false,
+            sparesUsed: true, // optional field
+            startDateTime: false,
+            endDateTime: false
+        };
+
+        // Validation rules
+        const validators = {
+            machineName: (value) => {
+                const regex = /^[a-zA-Z0-9\s-]{2,50}$/;
+                return {
+                    valid: regex.test(value),
+                    message: '2-50 characters, letters, numbers, spaces, and hyphens only'
+                };
+            },
+            jobDescription: (value) => {
+                const trimmed = value.trim();
+                return {
+                    valid: trimmed.length >= 5 && trimmed.length <= 500,
+                    message: '5-500 characters required'
+                };
+            },
+            sparesUsed: (value) => {
+                return {
+                    valid: value.length <= 500,
+                    message: 'Maximum 500 characters'
+                };
+            }
+        };
+
+        // Debounce function for performance
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        // Real-time validation
+        function validateField(fieldId, validator, errorId) {
+            const field = document.getElementById(fieldId);
+            const errorElement = document.getElementById(errorId);
+
+            const validate = () => {
+                const value = field.value.trim();
+                const result = validator ? validator(value) : { valid: !!value, message: 'Required field' };
+                
+                if (value === '' && !field.required) {
+                    field.classList.remove('invalid', 'success');
+                    errorElement.textContent = '';
+                    formState[fieldId] = true;
+                } else if (result.valid) {
+                    field.classList.remove('invalid');
+                    field.classList.add('success');
+                    errorElement.textContent = '';
+                    formState[fieldId] = true;
+                } else {
+                    field.classList.remove('success');
+                    field.classList.add('invalid');
+                    errorElement.textContent = result.message;
+                    formState[fieldId] = false;
+                }
+                updateSubmitButton();
+            };
+
+            field.addEventListener('input', debounce(validate, 300));
+            return validate;
+        }
+
+        // DateTime validation
+        function validateDateTime() {
+            const startDate = document.getElementById('startDate').value;
+            const startTime = document.getElementById('startTime').value;
+            const endDate = document.getElementById('endDate').value;
+            const endTime = document.getElementById('endTime').value;
+
+            const startDateTime = new Date(`${startDate}T${startTime}`);
+            const endDateTime = new Date(`${endDate}T${endTime}`);
+            const today = new Date();
+
+            let isValid = true;
+
+            // Start date validation
+            if (!startDate || isNaN(startDateTime.getTime()) || startDateTime > today) {
+                showError('startDate', 'startDateError', 'Invalid start date (cannot be in future)');
+                formState.startDateTime = false;
+                isValid = false;
+            } else {
+                clearError('startDate', 'startDateError');
+            }
+
+            // End date validation
+            if (!endDate || isNaN(endDateTime.getTime()) || endDateTime > today) {
+                showError('endDate', 'endDateError', 'Invalid end date (cannot be in future)');
+                formState.endDateTime = false;
+                isValid = false;
+            } else if (endDateTime < startDateTime) {
+                showError('endDate', 'endDateError', 'End date must be after start date');
+                formState.endDateTime = false;
+                isValid = false;
+            } else if (startDate === endDate && endTime <= startTime) {
+                showError('endTime', 'timeError', 'End time must be after start time');
+                formState.endDateTime = false;
+                isValid = false;
+            } else {
+                clearError('endDate', 'endDateError');
+                clearError('endTime', 'timeError');
+                formState.startDateTime = true;
+                formState.endDateTime = true;
+            }
+
+            updateSubmitButton();
+            return { startDateTime, endDateTime, isValid };
+        }
+
+        // Helper functions
+        function showError(fieldId, errorId, message) {
+            const field = document.getElementById(fieldId);
+            field.classList.add('invalid');
+            field.classList.remove('success');
+            document.getElementById(errorId).textContent = message;
+        }
+
+        function clearError(fieldId, errorId) {
+            const field = document.getElementById(fieldId);
+            field.classList.remove('invalid');
+            field.classList.add('success');
+            document.getElementById(errorId).textContent = '';
+        }
+
+        function updateSubmitButton() {
+            const allValid = Object.values(formState).every(state => state);
+            document.getElementById('submitBtn').disabled = !allValid;
+        }
+
+        // Initialize validators
+        const validateMachineName = validateField('machineName', validators.machineName, 'machineNameError');
+        const validateDescription = validateField('jobDescription', validators.jobDescription, 'descriptionError');
+        const validateSpares = validateField('sparesUsed', validators.sparesUsed, 'sparesError');
+
+        // Category validation
+        document.querySelectorAll('input[name="category"]').forEach(radio => {
+            radio.addEventListener('change', () => {
+                formState.category = true;
+                document.getElementById('categoryError').textContent = '';
+                updateSubmitButton();
+            });
+        });
+
+        // DateTime listeners
+        ['startDate', 'startTime', 'endDate', 'endTime'].forEach(id => {
+            document.getElementById(id).addEventListener('change', debounce(validateDateTime, 300));
+        });
+
+        // Form submission
+        document.getElementById('maintenanceForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const { startDateTime, endDateTime, isValid } = validateDateTime();
+            if (!isValid) return;
+
+            const record = {
+                machineName: document.getElementById('machineName').value.trim(),
+                maintenanceType: document.getElementById('maintenanceType').value,
+                category: document.querySelector('input[name="category"]:checked').value,
+                jobDescription: document.getElementById('jobDescription').value.trim(),
+                sparesUsed: document.getElementById('sparesUsed').value.trim(),
+                startDateTime,
+                endDateTime
+            };
+
+            record.duration = ((endDateTime - startDateTime) / (1000 * 60 * 60)).toFixed(2);
+            
+            records.push(record);
+            updateTable();
+            updateStats();
+            this.reset();
+            Object.keys(formState).forEach(key => formState[key] = key === 'sparesUsed');
+            document.querySelectorAll('.success').forEach(el => el.classList.remove('success'));
+            updateSubmitButton();
+        });
+
+        // Rest of the code (updateTable, updateStats, exportExcel) remains the same
+        function updateTable() {
+            const tbody = document.getElementById('recordsBody');
+            tbody.innerHTML = '';
+            
+            records.forEach(record => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${record.machineName}</td>
+                    <td>${record.maintenanceType}</td>
+                    <td>${record.category}</td>
+                    <td>${record.jobDescription}</td>
+                    <td>${record.sparesUsed}</td>
+                    <td>${record.startDateTime.toLocaleString()}</td>
+                    <td>${record.endDateTime.toLocaleString()}</td>
+                    <td>${record.duration}</td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        function updateStats() {
+            document.getElementById('totalRecords').textContent = records.length;
+            const totalHours = records.reduce((sum, record) => sum + parseFloat(record.duration), 0);
+            document.getElementById('totalHours').textContent = totalHours.toFixed(2);
+        }
+
+        document.getElementById('exportExcel').addEventListener('click', function() {
+            const worksheet = XLSX.utils.json_to_sheet(records.map(record => ({
+                'Machine Name': record.machineName,
+                'Maintenance Type': record.maintenanceType,
+                'Category': record.category,
+                'Job Description': record.jobDescription,
+                'Spares Used': record.sparesUsed,
+                'Start DateTime': record.startDateTime.toLocaleString(),
+                'End DateTime': record.endDateTime.toLocaleString(),
+                'Duration (hrs)': record.duration
+            })));
+            
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, 'Maintenance Records');
+            XLSX.writeFile(workbook, 'maintenance_records.xlsx');
+        });
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</body>
+</html>
